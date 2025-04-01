@@ -16,12 +16,14 @@ from gui_agents.s2.utils.common_utils import (
 )
 
 
+# 기본 ACI(Agent-Computer Interface) 클래스
 class ACI:
     def __init__(self):
+        # 지식 저장소 - save_to_knowledge 메서드로 저장된 정보를 보관
         self.notes: List[str] = []
 
 
-# Agent action decorator
+# 에이전트 액션 데코레이터: 메서드를 에이전트의 행동으로 표시
 def agent_action(func):
     func.is_agent_action = True
     return func
@@ -155,95 +157,96 @@ set_cell_values(new_cell_values={cell_values}, app_name="{app_name}", sheet_name
 """
 
 
-# ACI primitives are parameterized by description, and coordinate generation uses a pretrained grounding model
+# OSWorldACI 클래스: 실제 OS와 상호작용하는 구현체
 class OSWorldACI(ACI):
     def __init__(
         self,
-        platform: str,
-        engine_params_for_generation: Dict,
-        engine_params_for_grounding: Dict,
-        width: int = 1920,
-        height: int = 1080,
+        platform: str,                      # 운영체제 플랫폼 (macos, ubuntu, windows)
+        engine_params_for_generation: Dict,  # 텍스트 생성용 LLM 설정
+        engine_params_for_grounding: Dict,   # 이미지 인식용 LLM 설정
+        width: int = 1920,                  # 화면 너비
+        height: int = 1080,                 # 화면 높이
     ):
-        self.platform = (
-            platform  # Dictates how the switch_applications agent action works.
-        )
-
-        # Configure scaling
+        # 플랫폼 정보 저장 (OS별 다른 동작 수행)
+        self.platform = platform
+        
+        # 화면 좌표 스케일링 정보
         self.width = width
         self.height = height
-
-        # Maintain state for save_to_knowledge
+        
+        # 에이전트 지식 저장소
         self.notes = []
-
-        # Coordinates used during ACI execution
+        
+        # 액션 실행에 사용될 좌표 정보
         self.coords1 = None
         self.coords2 = None
-
-        # Configure the visual grounding model responsible for coordinate generation
+        
+        # UI 요소 인식을 위한 멀티모달 LLM 초기화
         self.grounding_model = LMMAgent(engine_params_for_grounding)
         self.engine_params_for_grounding = engine_params_for_grounding
-
-        # Configure text grounding agent
+        
+        # 텍스트 인식을 위한 LLM 초기화
         self.text_span_agent = LMMAgent(
             engine_params=engine_params_for_generation,
             system_prompt=PROCEDURAL_MEMORY.PHRASE_TO_WORD_COORDS_PROMPT,
         )
 
-    # Given the state and worker's referring expression, use the grounding model to generate (x,y)
+    # 참조 표현식(설명)을 기반으로 UI 요소의 좌표 생성
     def generate_coords(self, ref_expr: str, obs: Dict) -> List[int]:
-
-        # Reset the grounding model state
+        # 그라운딩 모델 상태 초기화
         self.grounding_model.reset()
-
-        # Configure the context, UI-TARS demo does not use system prompt
+        
+        # 프롬프트 구성: 사용자 설명을 좌표로 변환하도록 요청
         prompt = f"Query:{ref_expr}\nOutput only the coordinate of one point in your response.\n"
+        
+        # 멀티모달 LLM에 스크린샷과 함께 쿼리 전달
         self.grounding_model.add_message(
             text_content=prompt, image_content=obs["screenshot"], put_text_last=True
         )
-
-        # Generate and parse coordinates
+        
+        # 좌표 생성 및 파싱
         response = call_llm_safe(self.grounding_model)
         print("RAW GROUNDING MODEL RESPONSE:", response)
         numericals = re.findall(r"\d+", response)
         assert len(numericals) >= 2
         return [int(numericals[0]), int(numericals[1])]
 
-    # Calls pytesseract to generate word level bounding boxes for text grounding
+    # OCR을 사용하여 스크린샷에서 텍스트 요소와 위치 추출
     def get_ocr_elements(self, b64_image_data: str) -> Tuple[str, List]:
+        # 이미지 로드 및 OCR 처리
         image = Image.open(BytesIO(b64_image_data))
         image_data = pytesseract.image_to_data(image, output_type=Output.DICT)
-
-        # Clean text by removing leading and trailing spaces and non-alphabetical characters, but keeping punctuation
+        
+        # 텍스트 정리 및 구조화
         for i, word in enumerate(image_data["text"]):
             image_data["text"][i] = re.sub(
                 r"^[^a-zA-Z\s.,!?;:\-\+]+|[^a-zA-Z\s.,!?;:\-\+]+$", "", word
             )
-
+        
+        # 인식된 각 단어에 대한 정보 추출 (위치, 크기 등)
         ocr_elements = []
         ocr_table = "Text Table:\nWord id\tText\n"
-        # Obtain the <id, text, group number, word number> for each valid element
         grouping_map = defaultdict(list)
         ocr_id = 0
+        
+        # 텍스트 블록 단위로 정보 구성
         for i in range(len(image_data["text"])):
             block_num = image_data["block_num"][i]
             if image_data["text"][i]:
                 grouping_map[block_num].append(image_data["text"][i])
                 ocr_table += f"{ocr_id}\t{image_data['text'][i]}\n"
-                ocr_elements.append(
-                    {
-                        "id": ocr_id,
-                        "text": image_data["text"][i],
-                        "group_num": block_num,
-                        "word_num": len(grouping_map[block_num]),
-                        "left": image_data["left"][i],
-                        "top": image_data["top"][i],
-                        "width": image_data["width"][i],
-                        "height": image_data["height"][i],
-                    }
-                )
+                ocr_elements.append({
+                    "id": ocr_id,
+                    "text": image_data["text"][i],
+                    "group_num": block_num,
+                    "word_num": len(grouping_map[block_num]),
+                    "left": image_data["left"][i],
+                    "top": image_data["top"][i],
+                    "width": image_data["width"][i],
+                    "height": image_data["height"][i],
+                })
                 ocr_id += 1
-
+        
         return ocr_table, ocr_elements
 
     # Given the state and worker's text phrase, generate the coords of the first/last word in the phrase
@@ -254,9 +257,9 @@ class OSWorldACI(ACI):
         ocr_table, ocr_elements = self.get_ocr_elements(obs["screenshot"])
 
         alignment_prompt = ""
-        if alignment == "start":
+        if (alignment == "start"):
             alignment_prompt = "**Important**: Output the word id of the FIRST word in the provided phrase.\n"
-        elif alignment == "end":
+        elif (alignment == "end"):
             alignment_prompt = "**Important**: Output the word id of the LAST word in the provided phrase.\n"
 
         # Load LLM prompt
@@ -292,31 +295,32 @@ class OSWorldACI(ACI):
 
     # Takes a description based action and assigns the coordinates for any coordinate based action
     # Raises an error if function can't be parsed
+   # 에이전트 행동에 필요한 좌표 할당
     def assign_coordinates(self, plan: str, obs: Dict):
-
-        # Reset coords from previous action generation
+        # 이전 액션의 좌표 초기화
         self.coords1, self.coords2 = None, None
-
+        
         try:
-            # Extract the function name and args
+            # 액션 파싱: 함수명과 인자 추출
             action = parse_single_code_from_string(plan.split("Grounded Action")[-1])
             function_name = re.match(r"(\w+\.\w+)\(", action).group(1)
             args = self.parse_function_args(action)
         except Exception as e:
             raise RuntimeError(f"Error in parsing grounded action: {e}") from e
-
-        # arg0 is a description
+        
+        # 액션 유형에 따른 좌표 생성
+        # 1. 단일 좌표가 필요한 액션 (클릭, 입력, 스크롤)
         if (
             function_name in ["agent.click", "agent.type", "agent.scroll"]
             and len(args) >= 1
             and args[0] != None
         ):
             self.coords1 = self.generate_coords(args[0], obs)
-        # arg0 and arg1 are descriptions
+        # 2. 두 개의 좌표가 필요한 액션 (드래그 앤 드롭)
         elif function_name == "agent.drag_and_drop" and len(args) >= 2:
             self.coords1 = self.generate_coords(args[0], obs)
             self.coords2 = self.generate_coords(args[1], obs)
-        # arg0 and arg1 are text phrases
+        # 3. 텍스트 범위를 위한 특수 좌표 할당
         elif function_name == "agent.highlight_text_span" and len(args) >= 2:
             self.coords1 = self.generate_text_coords(args[0], obs, alignment="start")
             self.coords2 = self.generate_text_coords(args[1], obs, alignment="end")
@@ -369,29 +373,36 @@ class OSWorldACI(ACI):
     @agent_action
     def click(
         self,
-        element_description: str,
-        num_clicks: int = 1,
-        button_type: str = "left",
-        hold_keys: List = [],
+        element_description: str,       # 클릭할 요소 설명
+        num_clicks: int = 1,            # 클릭 횟수
+        button_type: str = "left",      # 마우스 버튼 타입 (left, right, middle)
+        hold_keys: List = [],           # 동시에 누를 키 목록
     ):
-        """Click on the element
-        Args:
-            element_description:str, a detailed descriptions of which element to click on. This description should be at least a full sentence.
-            num_clicks:int, number of times to click the element
-            button_type:str, which mouse button to press can be "left", "middle", or "right"
-            hold_keys:List, list of keys to hold while clicking
         """
+        설명에 기반하여 화면 요소 클릭
+        - element_description: 클릭할 대상에 대한 자세한 설명
+        - num_clicks: 클릭 횟수 설정
+        - button_type: 마우스 버튼 종류 
+        - hold_keys: 클릭하는 동안 함께 누를 키 (단축키 등)
+        """
+        # 모델이 생성한 원시 좌표를 실제 화면 좌표로 스케일링
         x, y = self.resize_coordinates(self.coords1)
+        
+        # pyautogui 명령어 구성
         command = "import pyautogui; "
-
-        # TODO: specified duration?
+        
+        # 키 누르기 명령 추가
         for k in hold_keys:
             command += f"pyautogui.keyDown({repr(k)}); "
+        
+        # 클릭 명령 추가
         command += f"""import pyautogui; pyautogui.click({x}, {y}, clicks={num_clicks}, button={repr(button_type)}); """
+        
+        # 키 떼기 명령 추가
         for k in hold_keys:
             command += f"pyautogui.keyUp({repr(k)}); "
-        # Return pyautoguicode to click on the element
-        return command
+            
+        return command  # 실행할 Python 코드 반환
 
     @agent_action
     def switch_applications(self, app_code):
@@ -417,51 +428,40 @@ class OSWorldACI(ACI):
     @agent_action
     def type(
         self,
-        element_description: Optional[str] = None,
-        text: str = "",
-        overwrite: bool = False,
-        enter: bool = False,
+        element_description: Optional[str] = None,  # 입력할 요소 설명 (없으면 현재 위치)
+        text: str = "",                            # 입력할 텍스트
+        overwrite: bool = False,                   # 기존 텍스트 덮어쓰기 여부
+        enter: bool = False,                       # 입력 후 엔터 키 누름 여부
     ):
-        """Type text into a specific element
-        Args:
-            element_description:str, a detailed description of which element to enter text in. This description should be at least a full sentence.
-            text:str, the text to type
-            overwrite:bool, Assign it to True if the text should overwrite the existing text, otherwise assign it to False. Using this argument clears all text in an element.
-            enter:bool, Assign it to True if the enter key should be pressed after typing the text, otherwise assign it to False.
-        """
-
+        """텍스트 입력 액션"""
+        # 타겟 요소 있으면 해당 위치로 이동
         if self.coords1 is not None:
-            # If a node is found, retrieve its coordinates and size
-            # Start typing at the center of the element
-
             x, y = self.resize_coordinates(self.coords1)
-
             command = "import pyautogui; "
             command += f"pyautogui.click({x}, {y}); "
-
+            
+            # 덮어쓰기 옵션이면 전체 선택 후 삭제
             if overwrite:
-                command += (
-                    f"pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace'); "
-                )
-
+                command += f"pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace'); "
+            
+            # 텍스트 입력
             command += f"pyautogui.write({repr(text)}); "
-
+            
+            # 엔터 키 옵션
             if enter:
                 command += "pyautogui.press('enter'); "
         else:
-            # If no element is found, start typing at the current cursor location
+            # 타겟 없이 현재 커서 위치에서 입력
             command = "import pyautogui; "
-
+            
             if overwrite:
-                command += (
-                    f"pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace'); "
-                )
-
+                command += f"pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace'); "
+            
             command += f"pyautogui.write({repr(text)}); "
-
+            
             if enter:
                 command += "pyautogui.press('enter'); "
-
+        
         return command
 
     @agent_action
@@ -530,7 +530,6 @@ class OSWorldACI(ACI):
             sheet_name: str, The name of the sheet in the spreadsheet.
         """
         return SET_CELL_VALUES_CMD.format(
-            cell_values=cell_values, app_name=app_name, sheet_name=sheet_name
         )
 
     @agent_action

@@ -1,0 +1,3 @@
+{
+  "Task:\nHow to open a new tab in Chrome on macOS?\n\nSubtask: Open a New Tab\nSubtask Instruction: Click on the \"+\" button next to the last open tab in Chrome to open a new tab.": "**Plan and Grounded Actions:**\n\n1. **Action:** Click on the \"+\" button next to the last open tab in Chrome to open a new tab.\n   - **Grounded Action:** `agent.click(\"element1_description\", 1, \"left\")`"
+}

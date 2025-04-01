@@ -1,0 +1,47 @@
+< 핵심 컴포넌트 구조 >
+[사용자 입력]
+      ↓
+[GraphSearchAgent] → [지식 베이스(KB)]
+   ↙        ↘          ↑ ↓
+[Manager]    [Worker] → [메모리]
+   ↓           ↓
+[계획/DAG]     [액션]
+                ↓
+          [OSWorldACI]
+                ↓
+        [LMMAgent(시각)]
+                ↓
+           [PyAutoGUI]
+                ↓
+         [컴퓨터 화면]
+
+
+< 주요 클래스 및 역할 >
+UIAgent (기본 클래스)
+- 모든 UI 에이전트의 인터페이스 정의
+- 기본 메서드: reset(), predict(), update_memory() 등
+
+GraphSearchAgent (핵심 구현체)
+- UIAgent 상속
+- 계층적 계획 및 그래프 기반 작업 실행 로직
+- Manager와 Worker 조정
+
+Manager (계획자)
+- 복잡한 작업을 서브태스크로 분할
+- 과거 지식/경험 활용하여 계획 생성
+- DAG로 서브태스크 간 의존성 모델링
+
+Worker (실행자)
+- 개별 서브태스크 실행
+- 세부 액션 계획 생성
+- ACI에 구체적인 행동 지시
+
+OSWorldACI (Agent-Computer Interface)
+- 추상적인 명령을 구체적인 컴퓨터 동작으로 변환
+- UI 요소 인식 및 좌표 생성 (@agent_action 데코레이터 메서드들)
+- PyAutoGUI 명령어 문자열 생성
+
+LMMAgent (LLM 래퍼)
+- 다양한 LLM API 통합 (OpenAI, Anthropic 등)
+- 텍스트/이미지 처리 기능
+- 프롬프트 및 응답 관리
